@@ -217,8 +217,16 @@ def test_explicit_local_references_are_imported(tmp_path, native, monkeypatch, r
     elif representation == "absolute":
         reference = str(source)
     elif representation == "tilde":
-        original_expanduser = os.path.expanduser
-        monkeypatch.setattr(os.path, "expanduser", lambda value: str(tmp_path) if value == "~" else str(tmp_path / value[2:]) if value.startswith("~/") else original_expanduser(value))
+        # Python 3.9/3.10 cache os.path.expanduser in pathlib's accessor;
+        # patch the public Path method so this fixture is version-independent.
+        original_expanduser = Path.expanduser
+
+        def expand_test_home(value):
+            if value.parts and value.parts[0] == "~":
+                return tmp_path.joinpath(*value.parts[1:])
+            return original_expanduser(value)
+
+        monkeypatch.setattr(Path, "expanduser", expand_test_home)
         reference = "~/example.paw"
     else:
         class LocalPath:

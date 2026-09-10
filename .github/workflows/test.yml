@@ -57,4 +57,19 @@ jobs:
           python -m pip install httpx pytest
           python -m pip install -e . --no-deps
       - name: Test Windows local paths, cache locks, and compile errors
-        run: python -m pytest tests/test_api_errors.py tests/test_compile_timeouts.py tests/test_local_program.py
+        run: python -m pytest tests/test_api_errors.py tests/test_compile_timeouts.py tests/test_local_program.py --junitxml=test-results.xml
+      - name: Annotate Windows test failures
+        if: failure()
+        shell: python
+        run: |
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          report = Path("test-results.xml")
+          if report.exists():
+              for case in ET.parse(report).iter("testcase"):
+                  for result in case:
+                      if result.tag in {"failure", "error"}:
+                          message = f"{case.get('name')}: {result.text or result.get('message', '')}"[:20000]
+                          message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                          print(f"::error::{message}")
