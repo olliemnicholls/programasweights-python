@@ -183,6 +183,31 @@ Status and cancellation requests must use the same authenticated account as
 submission. Anonymous jobs are bound to the validated client IP that submitted
 them.
 
+### Compile API errors
+
+`compile`, `precheck_compile`, `compile_async`, `get_compile_status`, and
+`cancel_compile` raise `paw.APIError` for HTTP 4xx/5xx responses. It is a subclass
+of `httpx.HTTPStatusError`, so existing handlers continue to work. When supplied
+by the server, `code`, `message`, and `request_id` are available as attributes
+and included in the exception text. Missing fields are `None`; the original
+`request` and `response` remain available, including response headers and body.
+
+```python
+try:
+    job = paw.compile_async(SPEC, compiler="paw-ft-bs48")
+except paw.APIError as error:
+    print(error.code, error.message, error.request_id)
+    # error.response.status_code and error.response.headers are unchanged.
+    raise
+```
+
+For example, a `durable_queue_unavailable` 503 reports that durable Redis must
+be healthy before async compilation can proceed. That rejection occurs before
+the job is accepted; the caller can submit again after service recovery.
+The SDK does not automatically retry compilation requests: other failures may
+occur after a job has already been recorded. Invalid/non-JSON error bodies
+retain the ordinary HTTP error description rather than displaying raw content.
+
 ## `paw.compile_and_load`
 
 ```python

@@ -39,6 +39,7 @@ from .client import (
     Program,
 )
 from .config import get_api_url, get_api_key, set_api_key
+from .errors import APIError
 
 
 def compile(
@@ -616,6 +617,7 @@ def list_compilers() -> list[dict]:
 
 
 __all__ = [
+    "APIError",
     "CachedProgram",
     "CompileCancellation",
     "CompileJob",

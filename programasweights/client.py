@@ -21,6 +21,7 @@ import httpx
 
 from . import config
 from ._output import ProgressCallback, report_progress
+from .errors import raise_for_api_status
 
 MAX_PAW_ARCHIVE_BYTES = 256 * 1024 * 1024
 MAX_PAW_ARCHIVE_MEMBERS = 256
@@ -170,7 +171,7 @@ class PAWClient:
             Program with id, slug, status, and timings.
 
         Raises:
-            httpx.HTTPStatusError: On API errors (422 for validation, 429 for rate limit).
+            APIError: On API errors; also caught by httpx.HTTPStatusError.
         """
         body = self._compile_body(
             spec,
@@ -191,7 +192,7 @@ class PAWClient:
             # New long-running callers should prefer compile_async().
             timeout=2400.0,
         )
-        resp.raise_for_status()
+        raise_for_api_status(resp)
         data = resp.json()
 
         return Program(
@@ -224,7 +225,7 @@ class PAWClient:
             headers=self._headers(),
             timeout=10.0,
         )
-        resp.raise_for_status()
+        raise_for_api_status(resp)
         return cast(CompilePrecheck, resp.json())
 
     def compile_async(
@@ -263,7 +264,7 @@ class PAWClient:
             headers=self._headers(),
             timeout=30.0,
         )
-        resp.raise_for_status()
+        raise_for_api_status(resp)
         return cast(CompileJob, resp.json())
 
     def get_compile_status(self, job_id: str) -> CompileStatus:
@@ -273,7 +274,7 @@ class PAWClient:
             headers=self._headers(),
             timeout=10.0,
         )
-        resp.raise_for_status()
+        raise_for_api_status(resp)
         return cast(CompileStatus, resp.json())
 
     def cancel_compile(self, job_id: str) -> CompileCancellation:
@@ -286,7 +287,7 @@ class PAWClient:
             headers=self._headers(),
             timeout=10.0,
         )
-        resp.raise_for_status()
+        raise_for_api_status(resp)
         return cast(CompileCancellation, resp.json())
 
     def resolve_slug(self, slug: str) -> str:
