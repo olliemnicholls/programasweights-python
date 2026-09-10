@@ -26,6 +26,19 @@ def _fingerprint(info: os.stat_result) -> tuple:
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
+def _open_fingerprint(info: os.stat_result) -> tuple:
+    if os.name != "nt":
+        return _fingerprint(info)
+    # CPython on Windows can expose creation time as stat(path).st_ctime,
+    # but metadata-change time as fstat(fd).st_ctime. Compare the fields with
+    # matching meanings across APIs; each API's full fingerprint (including
+    # ctime) is still checked against its own baseline after reading.
+    return (
+        info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
+        getattr(info, "st_birthtime_ns", None),
+    )
+
+
 @contextmanager
 def _stable_regular_file(path: Path, *, allow_symlink: bool = False):
     """Open without FIFO blocking and reject replacements or concurrent writes."""
@@ -38,12 +51,12 @@ def _stable_regular_file(path: Path, *, allow_symlink: bool = False):
     descriptor = os.open(path, flags)
     with os.fdopen(descriptor, "rb") as source:
         opened = os.fstat(source.fileno())
-        if not stat.S_ISREG(opened.st_mode) or _fingerprint(opened) != _fingerprint(before):
+        if not stat.S_ISREG(opened.st_mode) or _open_fingerprint(opened) != _open_fingerprint(before):
             raise ValueError(f"Local program asset changed while opening: {path}")
         yield source, before
         after = os.fstat(source.fileno())
         current = path.stat() if allow_symlink else path.lstat()
-        if _fingerprint(before) != _fingerprint(after) or _fingerprint(before) != _fingerprint(current):
+        if _fingerprint(opened) != _fingerprint(after) or _fingerprint(before) != _fingerprint(current):
             raise ValueError(f"Local program asset changed while reading: {path}")
 
 

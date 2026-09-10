@@ -47,11 +47,15 @@ jobs:
 
   local-files-windows:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Install hermetic test dependencies
         run: |
           python -m pip install httpx pytest
@@ -70,6 +74,9 @@ jobs:
               for case in ET.parse(report).iter("testcase"):
                   for result in case:
                       if result.tag in {"failure", "error"}:
-                          message = f"{case.get('name')}: {result.text or result.get('message', '')}"[:20000]
+                          # GitHub truncates annotations, so retain the actual
+                          # exception at the end of long pytest tracebacks.
+                          detail = result.text or result.get("message", "")
+                          message = f"{case.get('name')}: {detail[-3500:]}"
                           message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
                           print(f"::error::{message}")

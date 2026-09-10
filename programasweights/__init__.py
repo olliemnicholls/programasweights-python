@@ -401,8 +401,9 @@ def function(
 ):
     """Load a compiled program, or explicitly load a bare base interpreter.
 
-    Downloads the .paw bundle and base model GGUF on first use.
-    Subsequent calls use the local cache.
+    Hub references download the .paw bundle on first use; local paths supply
+    it directly. Required runtime metadata and base models may still download
+    unless offline mode is enabled. Subsequent calls reuse validated caches.
 
     Args:
         program_id: Program ID (str), slug (``da03/my-program``), pinned version

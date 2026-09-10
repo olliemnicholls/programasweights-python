@@ -556,3 +556,121 @@ def test_local_archive_resource_limits_are_enforced(tmp_path, native, monkeypatc
     with pytest.raises((ValueError, RuntimeError, OSError)):
         paw.function(source, verbose=True)
     assert not native[1].instances
+
+
+def _stat_view(info, **changes):
+    values = {name: getattr(info, name) for name in dir(info) if name.startswith("st_")}
+    values.update(changes)
+    return SimpleNamespace(**values)
+
+
+def _patch_local_os(monkeypatch, **changes):
+    from programasweights import local_program
+
+    # Do not change the shared os module: pathlib must keep using the host OS.
+    values = vars(os).copy()
+    values.update(changes)
+    monkeypatch.setattr(local_program, "os", SimpleNamespace(**values))
+
+
+def test_windows_stat_and_fstat_ctime_semantics_allow_verified_import(tmp_path, monkeypatch):
+    source = archive(tmp_path / "example.paw")
+    original = source.read_bytes()
+    original_fstat = os.fstat
+
+    def fstat_with_change_time(descriptor):
+        info = original_fstat(descriptor)
+        # Windows CPython stat(path) reports creation time where fstat(fd)
+        # reports metadata-change time. Stable files need not match here.
+        return _stat_view(info, st_ctime_ns=info.st_ctime_ns + 123456789)
+
+    _patch_local_os(monkeypatch, name="nt", fstat=fstat_with_change_time)
+    imported = import_local(source)
+    assert imported.name == hashlib.sha256(original).hexdigest()
+    assert (imported / "adapter.gguf").read_bytes() == ADAPTER
+    assert import_local(source) == imported
+    assert source.read_bytes() == original
+
+
+def test_reimport_rejects_cached_asset_symlink_without_overwriting_it(tmp_path):
+    source = archive(tmp_path / "example.paw")
+    imported = import_local(source)
+    adapter = imported / "adapter.gguf"
+    target = tmp_path / "other-adapter.gguf"
+    target.write_bytes(ADAPTER)
+    link = tmp_path / "test-adapter-link"
+    try:
+        link.symlink_to(target)
+    except OSError as error:
+        if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows runner lacks the privilege to create symlinks")
+        raise
+    # Establish symlink support before replacing the valid fixture asset.
+    adapter.unlink()
+    link.rename(adapter)
+    with pytest.raises(ValueError):
+        import_local(source)
+    assert adapter.is_symlink()
+    assert target.read_bytes() == ADAPTER
+
+
+def _stable_file_with_stat_results(tmp_path, monkeypatch, *, platform="nt", **changes):
+    from programasweights import local_program
+
+    source = tmp_path / "stable.paw"
+    source.write_bytes(b"stable")
+    before = SimpleNamespace(
+        st_mode=stat.S_IFREG | 0o600, st_dev=11, st_ino=22, st_size=6,
+        st_mtime_ns=100, st_ctime_ns=200, st_birthtime_ns=200,
+    )
+    opened = _stat_view(before, st_ctime_ns=300 if platform == "nt" else 200)
+    results = {"before": before, "opened": opened, "after": opened, "current": before}
+    for stage, (field, value) in changes.items():
+        results[stage] = _stat_view(results[stage], **{field: value})
+    path_stats = iter((results["before"], results["current"]))
+    fd_stats = iter((results["opened"], results["after"]))
+
+    class StatPath:
+        def __fspath__(self):
+            return str(source)
+
+        def stat(self):
+            return next(path_stats)
+
+        lstat = stat
+
+    _patch_local_os(monkeypatch, name=platform, fstat=lambda descriptor: next(fd_stats))
+    return local_program._stable_regular_file(StatPath())
+
+
+@pytest.mark.parametrize("field,value", [
+    ("st_dev", 12), ("st_ino", 23), ("st_size", 7),
+    ("st_mtime_ns", 101), ("st_birthtime_ns", 201),
+    ("st_mode", stat.S_IFIFO | 0o600),
+])
+def test_windows_open_still_rejects_identity_or_content_metadata_mismatch(tmp_path, monkeypatch, field, value):
+    context = _stable_file_with_stat_results(tmp_path, monkeypatch, opened=(field, value))
+    with pytest.raises(ValueError, match="changed while opening"):
+        with context:
+            pytest.fail("A mismatched opened file must not be read")
+
+
+@pytest.mark.parametrize("stage", ["after", "current"])
+@pytest.mark.parametrize("field,value", [
+    ("st_dev", 12), ("st_ino", 23), ("st_size", 7),
+    ("st_mtime_ns", 101), ("st_ctime_ns", 999),
+])
+def test_windows_read_still_rejects_path_or_handle_mutation(tmp_path, monkeypatch, stage, field, value):
+    context = _stable_file_with_stat_results(tmp_path, monkeypatch, **{stage: (field, value)})
+    with pytest.raises(ValueError, match="changed while reading"):
+        with context as (source, before):
+            assert source.read() == b"stable"
+
+
+def test_posix_open_still_compares_ctime_across_path_and_handle(tmp_path, monkeypatch):
+    context = _stable_file_with_stat_results(
+        tmp_path, monkeypatch, platform="posix", opened=("st_ctime_ns", 300),
+    )
+    with pytest.raises(ValueError, match="changed while opening"):
+        with context:
+            pytest.fail("POSIX metadata changes while opening must be rejected")
