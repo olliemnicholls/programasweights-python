@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.5 (Unreleased)
+## 0.4.5 (2026-09-10)
 
 - Expose structured compile API failures as `paw.APIError`, compatible with
   `httpx.HTTPStatusError`, preserving server code, message, request ID, and the
