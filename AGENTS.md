@@ -43,6 +43,8 @@ fn = paw.compile_and_load("Classify sentiment as positive or negative")
 fn("I love this!")  # "positive"
 ```
 
+Load a local `.paw` file with `paw.function("./classifier.paw")` (SDK 0.4.5+).
+
 If you want the smaller browser-compatible runtime explicitly, pass `compiler="paw-4b-gpt2"`. Otherwise, omit `compiler` and let the server default decide.
 
 ## Current Public Compilers
@@ -89,6 +91,8 @@ Output: delete
 - Spec + input + output share a ~2048 token context window. Inputs that exceed it will error.
 - `max_tokens` defaults to `None`: generation runs until EOS or the context limit.
 - Compile runs on the hosted PAW API. Inference should usually run locally through the SDK.
+- Synchronous compile requests use a 40-minute read timeout.
+- **Run local inference sequentially by default.** With PAW’s current llama.cpp backend, simultaneous inference calls often perform worse. Reuse loaded functions and process inputs one at a time; never call the same function instance concurrently.
 - **GPU acceleration** is enabled by default (`n_gpu_layers=-1`). Uses Metal on Mac, CUDA on Linux, and falls back to CPU automatically. If GPU causes issues, set `PAW_GPU_LAYERS=0` or pass `n_gpu_layers=0`.
 - **First call** is usually ~1-5s because it loads the base model. Subsequent calls are typically ~0.05-0.5s depending on input length and GPU availability.
 - **Base model files are shared** across programs on disk. Each Standard LoRA adapter is ~22 MB; each Compact LoRA adapter is ~5 MB.
@@ -101,6 +105,8 @@ Output: delete
   its strict prompt and offline semantics.
 
 ## Common Errors
+
+Compile API HTTP errors raise `paw.APIError`. Check `error.code` and `error.message` for details. The SDK does not retry automatically.
 
 | Error | Cause | Fix |
 |-------|-------|-----|
