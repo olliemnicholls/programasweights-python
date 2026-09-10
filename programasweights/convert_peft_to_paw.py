@@ -1,15 +1,11 @@
 """
-Convert a PEFT/LoRA checkpoint to .paw format.
+Legacy PEFT/LoRA converter for the PAW-v2 tensor format.
 
-Supports the standard PEFT workflow:
-  1. Train with HuggingFace PEFT library
-  2. Save adapter: model.save_pretrained("my_adapter/")
-  3. Convert to .paw: paw.from_peft("my_adapter/", "output.paw", spec="...")
-
-The resulting .paw file can be:
-  - Shared on the Program Hub
-  - Loaded with paw.function("output.paw")
-  - Distributed as a single file
+This module writes the historical PAW\\x02 tensor container, not the current
+GGUF ZIP .paw bundle. Its output is NOT supported by the modern public
+paw.function local-file loader. It does not convert PEFT weights to GGUF, and
+from_peft is not exported as paw.from_peft. Use a current hosted-compile bundle
+for the public loader; this legacy converter is retained for older workflows.
 """
 
 import json
@@ -34,7 +30,9 @@ def from_peft(
     interpreter_model: Optional[str] = None,
 ) -> str:
     """
-    Convert a PEFT/LoRA adapter to .paw format.
+    Convert a PEFT/LoRA adapter to the legacy, non-GGUF .paw tensor format.
+
+    The output cannot be loaded by the modern public paw.function API.
     
     Args:
         adapter_path: Path to PEFT adapter directory (contains adapter_config.json + adapter_model.safetensors)
@@ -51,7 +49,7 @@ def from_peft(
         Path to saved .paw file
     
     Example:
-        >>> import programasweights as paw
+        >>> from programasweights.convert_peft_to_paw import from_peft
         >>>
         >>> # After training with PEFT:
         >>> # from peft import get_peft_model, LoraConfig
@@ -59,8 +57,8 @@ def from_peft(
         >>> # trainer.train()
         >>> # model.save_pretrained("my_adapter/")
         >>>
-        >>> # Convert to .paw:
-        >>> paw.from_peft(
+        >>> # Convert for a legacy tensor-format consumer, not paw.function:
+        >>> from_peft(
         ...     "my_adapter/",
         ...     "sentiment.paw",
         ...     spec="Classify text sentiment as positive, negative, or neutral",

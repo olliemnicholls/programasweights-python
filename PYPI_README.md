@@ -71,6 +71,19 @@ finetune compiles can be queued with
 `paw.compile_async(spec, compiler="paw-ft-bs48")`; an explicit finetune
 compiler is required.
 
+Load a saved current GGUF ZIP `.paw` bundle directly (SDK 0.4.5+):
+
+```python
+from pathlib import Path
+fn = paw.function(Path("classifier.paw"))
+```
+
+Local files are validated into a separate SHA-256 cache without changing the
+source or falling back to Hub lookup. Runtime metadata or the shared base model
+may still download; `offline=True` prohibits those requests. Legacy tensor-format
+`.paw` files are unsupported. Local-file inputs are supported by `function`,
+not `prepare_program` or `is_offline_ready`.
+
 Advanced adapter-free inference is available with
 `paw.function(None, interpreter="gpt2")`; see the Python API reference for
 its intentionally strict semantics.

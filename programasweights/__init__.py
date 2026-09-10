@@ -27,7 +27,7 @@ try:
     from importlib.metadata import version as _meta_version
     __version__ = _meta_version("programasweights")
 except Exception:
-    __version__ = "0.4.4"
+    __version__ = "0.4.5"
 
 from ._output import ProgressCallback, ProgressEvent, report_progress
 from .cache import CachedProgram
@@ -406,13 +406,16 @@ def function(
 
     Args:
         program_id: Program ID (str), slug (``da03/my-program``), pinned version
-            (``da03/my-program@v3``), or a ``Program`` object from compile().
+            (``da03/my-program@v3``), a ``Program`` object from compile(), or a
+            local GGUF-based .paw bundle. PathLike objects and explicit path
+            strings (including strings ending in .paw) select local files.
         n_ctx: Context window size for llama.cpp.
         n_gpu_layers: GPU layers (-1 = all GPU, 0 = CPU only). Defaults to -1
             (auto-uses Metal/CUDA if available, safe fallback to CPU).
             Set ``PAW_GPU_LAYERS=0`` env var to force CPU-only.
         verbose: Print llama.cpp debug output.
-        offline: Skip server check for slug resolution and use local cache only.
+        offline: Prohibit network access. Local bundles may be imported, but
+            their runtime and base model must already be available locally.
             Also set via ``PAW_OFFLINE=1`` env var.
         interpreter: Advanced adapter-free mode. This is only valid when
             ``program_id`` is explicitly ``None``. Initially supported values
@@ -427,6 +430,8 @@ def function(
         'immediate'
 
         >>> fn = paw.function("da03/my-program@v2")  # pinned version
+
+        >>> fn = paw.function("./classifier.paw")  # local bundle
 
         >>> base = paw.function(None, interpreter="gpt2")
     """
@@ -453,7 +458,12 @@ def function(
             offline=offline,
         )
 
-    program_reference = _coerce_program_reference(program_id)
+    from ._program_reference import local_program_path
+
+    local_path = local_program_path(program_id)
+    program_reference = (
+        _coerce_program_reference(program_id) if local_path is None else None
+    )
     if program_reference == "":
         raise ValueError(
             "program_id cannot be an empty string; pass explicit None with "
@@ -465,25 +475,35 @@ def function(
             "program_id=None to request adapter-free base mode."
         )
 
-    from .runtime_llamacpp import PawFunction
+    if local_path is not None:
+        from .local_program import import_local_program
 
-    resolved_id = _resolve_program_id(program_reference, offline=offline)
-    if offline and not cache.has_valid_program_assets(resolved_id):
-        raise RuntimeError(
-            f"Program {resolved_id} is not fully cached; offline mode "
-            "prohibits program downloads."
-        )
-    if not cache.has_valid_program_assets(resolved_id):
-        from .client import PAWClient
+        # Validate explicit local input before importing the native runtime.
+        # A missing/corrupt file is never retried as a Hub ID or slug.
+        program_dir = import_local_program(local_path)
+        from .runtime_llamacpp import PawFunction
+    else:
+        # Preserve the existing Hub path's fail-fast dependency check before
+        # resolving slugs or downloading assets.
+        from .runtime_llamacpp import PawFunction
 
-        client = PAWClient(api_url=get_api_url(), api_key=get_api_key())
-        client.download_paw(resolved_id)
-    if not cache.has_valid_program_assets(resolved_id):
-        raise RuntimeError(
-            f"Program {resolved_id} is missing valid compiled assets."
-        )
+        resolved_id = _resolve_program_id(program_reference, offline=offline)
+        if offline and not cache.has_valid_program_assets(resolved_id):
+            raise RuntimeError(
+                f"Program {resolved_id} is not fully cached; offline mode "
+                "prohibits program downloads."
+            )
+        if not cache.has_valid_program_assets(resolved_id):
+            from .client import PAWClient
 
-    program_dir = cache.get_program_dir(resolved_id)
+            client = PAWClient(api_url=get_api_url(), api_key=get_api_key())
+            client.download_paw(resolved_id)
+        if not cache.has_valid_program_assets(resolved_id):
+            raise RuntimeError(
+                f"Program {resolved_id} is missing valid compiled assets."
+            )
+        program_dir = cache.get_program_dir(resolved_id)
+
     return PawFunction(
         program_dir,
         n_ctx=n_ctx,

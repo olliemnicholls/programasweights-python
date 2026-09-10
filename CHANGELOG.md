@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.5 (Unreleased)
+
+- Expose structured compile API failures as `paw.APIError`, compatible with
+  `httpx.HTTPStatusError`, preserving server code, message, request ID, and the
+  original response. Transport errors propagate unchanged; no automatic retries.
+- Allow synchronous compilation a 2,400-second read timeout while keeping
+  connect, write, and pool timeouts at 120 seconds. Async submission stays at
+  30 seconds; precheck, status, and cancellation stay at 10 seconds.
+- Load current GGUF ZIP `.paw` files through `paw.function` using explicit
+  local paths or `Path` objects. Validated imports use a separate SHA-256 cache
+  without replacing Hub caches or source files; invalid local files never fall
+  back to Hub lookup. Shared base-model assets may still need downloading unless
+  offline mode is requested. Legacy tensor-format `.paw` files are unsupported.
+
 ## 0.4.4 (2026-07-18)
 
 - Add desktop preparation and cache inspection APIs with structured progress:

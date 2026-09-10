@@ -28,15 +28,17 @@ fn = paw.function(
 )
 ```
 
-Loads a compiled program and returns a callable. Downloads the program and base model on first use; cached locally after that. Works offline after first download.
+Loads a compiled program and returns a callable. Hub references download the
+program and base model on first use; local `.paw` files supply the program
+bundle directly. Required runtime metadata and base models are cached for reuse.
 
 | Parameter | Description |
 |-----------|-------------|
-| `program_id` | Required. A `Program` object, hash ID (e.g. `a6b454023d41ac9ca845`), slug (e.g. `da03/my-classifier`), or official shorthand (e.g. `email-triage`). A `Program` resolves by immutable `id`, not its mutable slug. |
+| `program_id` | Required. A `Program` object, hash ID (e.g. `a6b454023d41ac9ca845`), slug (e.g. `da03/my-classifier`), official shorthand (e.g. `email-triage`), or local `.paw` path (see below). A `Program` resolves by immutable `id`, not its mutable slug. |
 | `n_ctx` | Context length for the local runtime (default `2048`). |
 | `n_gpu_layers` | GPU layers to offload (`0` = CPU-only, `-1` = all). The default is `-1`, or `PAW_GPU_LAYERS` when set. |
 | `verbose` | Enable verbose logging (default `False`). |
-| `offline` | Require all program/runtime/model assets to already be cached and make zero network calls. `PAW_OFFLINE=1` has the same effect. |
+| `offline` | Use only local files/cache and make zero network calls; fail if required validated assets are missing. `PAW_OFFLINE=1` has the same effect. |
 | `interpreter` | Advanced adapter-free mode only. Must be passed by keyword and only when `program_id` is explicitly `None`. Supported values are `Qwen/Qwen3-0.6B` and `gpt2`. |
 
 The returned callable:
@@ -54,13 +56,52 @@ output: str = fn(input_text, max_tokens=None, temperature=0.0)
 **Context limits:** Spec + input + output share a ~2048 token window. Inputs that exceed it will error. `max_tokens` defaults to `None`: generation runs until EOS or the context limit.
 
 Compiled mode is strict: the adapter, prompt template, matching metadata,
-runtime manifest, and runtime-compatible base-model file must all validate. Version 0.4.4
+runtime manifest, and runtime-compatible base-model file must all validate. Version 0.4.5
 accepts runtime manifest version 1 with `adapter_format="gguf_lora"`.
 Built-in models are checked against pinned size/SHA-256 metadata and GGUF
 magic. Historical manifests for those known runtime IDs are normalized to the
 same canonical integrity metadata, so missing server-side checksum fields
 cannot weaken validation. Missing or failed adapters raise an error; the SDK
 never silently falls back to an unadapted base model.
+
+### Loading a local `.paw` file
+
+Version 0.4.5 adds local-file inputs to `paw.function`:
+
+```python
+from pathlib import Path
+
+fn = paw.function(Path("classifier.paw"))
+# With the required runtime metadata and base model already available locally:
+fn = paw.function("./classifier.paw", offline=True)
+```
+
+Use a current GGUF ZIP `.paw` bundle, such as one downloaded from a hosted
+compile. It must contain `meta.json`, `adapter.gguf`, and `prompt_template.txt`,
+with only `pseudo_program.txt` allowed as an optional extra; serialized native
+prefix state is not accepted from archives. Local inputs are selected
+deterministically: a `Path`/`os.PathLike`
+object, an explicit path such as `./classifier.paw` or an absolute path, or a
+string ending in `.paw` (case-insensitive). Ordinary IDs and slugs such as
+`da03/my-classifier` keep their existing Hub behavior even if a matching local
+file exists. Use `Path(...)` or an explicit path for a filename without the
+`.paw` suffix. URL inputs are unsupported.
+
+The bundle is validated and imported under
+`PAW_CACHE_DIR/local_programs/<archive-sha256>` (default cache root:
+`~/.cache/programasweights`). Its source file is unchanged, and its metadata
+cannot replace a Hub program-ID or slug cache. Missing or invalid local files
+raise an error without falling back to a Hub lookup or program download.
+
+A local program does not necessarily make the first load fully offline:
+the existing runtime policy may fetch required runtime metadata from PAW and
+download the shared base model. Pass `offline=True` or set `PAW_OFFLINE=1`
+to prohibit all network access. Historical `PAW\x02` tensor containers,
+including output from the legacy `convert_peft_to_paw` module, are not supported
+by this loader; it does not convert PEFT tensors to GGUF.
+
+Only `paw.function` gains local-file inputs. `prepare_program` and
+`is_offline_ready` continue to accept Hub program references.
 
 ### Advanced: adapter-free base interpreter
 
@@ -155,10 +196,23 @@ Compiles a natural language spec on the server. Returns a `Program` object.
 |-----------|-------------|
 | `id` | Hash-based program identifier. Use with `paw.function(program.id)`. |
 | `slug` | Full slug handle (e.g. `da03/my-classifier`) if one was created, `None` otherwise. |
-| `status` | `"ready"` on success, `"failed"` on error. |
+| `status` | Status returned by the server, normally `"ready"` on success. HTTP errors raise `APIError` instead of returning a failed `Program`. |
 | `compiler_snapshot` | Exact compiler version used. |
 | `timings` | Timing metadata from the server. |
 | `error` | Error message when compilation fails. |
+
+### Compile timeouts
+
+Synchronous `compile` uses `httpx.Timeout(120.0, read=2400.0)`: connect, write,
+and pool waits remain 120 seconds; the read timeout is 2,400 seconds. This
+allows for the origin's 1,900-second provider wait plus up to 330 seconds of
+artifact finalization. It is a timeout while waiting for response data, **not a
+40-minute total deadline or guarantee**; upstream services may fail earlier.
+The same setting applies to the compile step of `compile_and_load`.
+
+Async submission retains a 30-second timeout. Precheck, status polling, and
+cancellation each retain a 10-second timeout. For long finetunes, prefer the
+explicit async workflow below so you retain a job ID for later status checks.
 
 ## Long-running compile jobs
 
@@ -207,6 +261,12 @@ the job is accepted; the caller can submit again after service recovery.
 The SDK does not automatically retry compilation requests: other failures may
 occur after a job has already been recorded. Invalid/non-JSON error bodies
 retain the ordinary HTTP error description rather than displaying raw content.
+
+Transport errors such as `httpx.ReadTimeout` propagate unchanged, rather than
+becoming `APIError`. A timeout does not prove the server rejected or cancelled
+the work, so the SDK does not automatically resubmit it. Both `paw.compile`
+and `paw.compile_and_load` propagate these errors; `compile_and_load` does not
+attempt to load a function when compilation raises.
 
 ## `paw.compile_and_load`
 

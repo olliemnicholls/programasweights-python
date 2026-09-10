@@ -187,10 +187,10 @@ class PAWClient:
             f"{self._api_url}/api/v1/compile",
             json=body,
             headers=self._headers(),
-            # Preserve the compatibility sync path: a finetune may use its
-            # 1900s provider budget plus 330s of artifact finalization.
-            # New long-running callers should prefer compile_async().
-            timeout=2400.0,
+            # Allow a long response wait (1900s provider + 330s finalization)
+            # without extending connect/write/pool timeouts beyond 120s.
+            # This is a read timeout, not a total deadline; prefer compile_async().
+            timeout=httpx.Timeout(120.0, read=2400.0),
         )
         raise_for_api_status(resp)
         data = resp.json()
