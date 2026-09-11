@@ -136,7 +136,16 @@ List available compiler models and identifiers for use with compile requests.
 
 ### `GET /health`
 
-Liveness or readiness style health check for the API service.
+Returns HTTP 200 for API liveness. The JSON `status` is `healthy` only when
+all enabled public compilers pass their provider checks; otherwise it is
+`degraded`, with details in `warnings` and `gpu_services`, keyed by compiler
+name. Finetune checks include its base compiler, durable Redis, and at least
+one healthy worker. A healthy worker remains available while busy.
+
+Checks run concurrently with a three-second timeout and share a five-second
+cache. `queue_depth` counts waiting finetune jobs across distinct dispatchers,
+not running jobs; it is `null` when a queue cannot be verified. This is a
+readiness observation, not a guarantee that a new compilation will succeed.
 
 ## Errors
 
